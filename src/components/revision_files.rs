@@ -395,6 +395,9 @@ impl DrawableComponent for RevisionFilesComponent {
 			self.draw_tree(f, chunks[0])?;
 
 			self.current_file.draw(f, chunks[1])?;
+			let current_size =
+				usize::from(area.height.saturating_sub(2));
+			self.tree.set_current_size(Some(current_size));
 		}
 		Ok(())
 	}

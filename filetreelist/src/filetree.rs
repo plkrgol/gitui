@@ -2,7 +2,7 @@ use crate::{
 	error::Result, filetreeitems::FileTreeItems,
 	tree_iter::TreeIterator, TreeItemInfo,
 };
-use std::{collections::BTreeSet, path::Path};
+use std::{cell::Cell, collections::BTreeSet, path::Path, usize};
 
 ///
 #[derive(Copy, Clone, Debug)]
@@ -30,6 +30,7 @@ pub struct FileTree {
 	selection: Option<usize>,
 	// caches the absolute selection translated to visual index
 	visual_selection: Option<VisualSelection>,
+	current_height: Cell<Option<usize>>,
 }
 
 impl FileTree {
@@ -42,6 +43,7 @@ impl FileTree {
 			items: FileTreeItems::new(list, collapsed)?,
 			selection: if list.is_empty() { None } else { Some(0) },
 			visual_selection: None,
+			current_height: Cell::new(None),
 		};
 		new_self.visual_selection = new_self.calc_visual_selection();
 
@@ -130,8 +132,11 @@ impl FileTree {
 					Self::selection_start(selection)
 				}
 				MoveSelection::End => self.selection_end(selection),
-				MoveSelection::PageDown | MoveSelection::PageUp => {
-					None
+				MoveSelection::PageUp => {
+					self.selection_pageupdown(selection, true)
+				}
+				MoveSelection::PageDown => {
+					self.selection_pageupdown(selection, false)
 				}
 			};
 
@@ -164,6 +169,10 @@ impl FileTree {
 		}
 		self.visual_selection = self.calc_visual_selection();
 		true
+	}
+
+	pub fn set_current_size(&self, new_size: Option<usize>) {
+		self.current_height.set(new_size);
 	}
 
 	fn visual_index_to_absolute(
@@ -331,6 +340,56 @@ impl FileTree {
 		None
 	}
 
+	fn selection_pageupdown(
+		&self,
+		current_index: usize,
+		up: bool,
+	) -> Option<usize> {
+		let mut index = current_index;
+		let page_offset = self
+			.current_height
+			.get()
+			.unwrap_or_default()
+			.saturating_sub(1);
+
+		let mut count = 0;
+
+		loop {
+			if count >= page_offset {
+				break;
+			}
+
+			index = {
+				let new_index = if up {
+					index.saturating_sub(1)
+				} else {
+					index.saturating_add(1)
+				};
+
+				// when reaching usize bounds
+				if new_index == index {
+					break;
+				}
+
+				if new_index >= self.items.len() {
+					break;
+				}
+
+				new_index
+			};
+
+			if self.is_visible_index(index) {
+				count += 1;
+			}
+		}
+
+		if index == current_index {
+			None
+		} else {
+			Some(index)
+		}
+	}
+
 	fn is_visible_index(&self, index: usize) -> bool {
 		self.items
 			.tree_items
@@ -361,6 +420,37 @@ mod test {
 		assert!(!tree.move_selection(MoveSelection::Down));
 
 		assert_eq!(tree.selection, Some(1));
+	}
+
+	#[test]
+	fn test_selection_page_updown() {
+		let items = vec![
+			Path::new("a/b"), //
+			Path::new("c/d"), //
+			Path::new("e/f"), //
+			Path::new("g/h"), //
+		];
+
+		let mut tree =
+			FileTree::new(&items, &BTreeSet::new()).unwrap();
+
+		tree.set_current_size(Some(8));
+
+		assert!(tree.move_selection(MoveSelection::PageDown));
+
+		assert_eq!(tree.selection, Some(7));
+
+		assert!(!tree.move_selection(MoveSelection::PageDown));
+
+		assert_eq!(tree.selection, Some(7));
+
+		assert!(tree.move_selection(MoveSelection::PageUp));
+
+		assert_eq!(tree.selection, Some(0));
+
+		assert!(!tree.move_selection(MoveSelection::PageUp));
+
+		assert_eq!(tree.selection, Some(0));
 	}
 
 	#[test]
